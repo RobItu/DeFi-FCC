@@ -5,25 +5,30 @@ const { networkConfig } = require("../helper-hardhat-config")
 async function main() {
     await getWeth()
     const { deployer } = await getNamedAccounts()
-    const AMOUNT = ethers.utils.parseEther("0.01")
-    //0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5
+    const AMOUNT = networkConfig[network.config.chainId]["AmountToDeposit"]
+
     const lendingPool = await getLendingPool(deployer)
     console.log(`LendingPool address ${lendingPool.address}`)
 
     const wethTokenAddress = networkConfig[network.config.chainId]["wethTokenAddress"]
-    //approve
     await approveErc20(wethTokenAddress, lendingPool.address, AMOUNT, deployer)
     console.log("depositing...")
     await lendingPool.deposit(wethTokenAddress, AMOUNT, deployer, 0)
     console.log("DEPOSITED")
-    let { availableBorrowsETH, totalDebtETH } = await getBorrowUserData(lendingPool, deployer)
 
+    let { availableBorrowsETH, totalDebtETH } = await getBorrowUserData(lendingPool, deployer)
     const daiPrice = await getDaiPrice()
     const amountDaiBorrowed =
         (await availableBorrowsETH.toString()) * 0.95 * (1 / daiPrice.toNumber())
     console.log(`You can borrow: ${amountDaiBorrowed.toString()} DAI`)
 
-    const amountDaiToBorrowWei = ethers.utils.parseEthers(amountDaiBorrowed.toString())
+    const amountDaiToBorrowWei = ethers.utils.parseEther(amountDaiBorrowed.toString())
+    const daiTokenAddress = networkConfig[network.config.chainId]["daiTokenAddress"]
+    await borrowDai(daiTokenAddress, lendingPool, amountDaiToBorrowWei, deployer)
+    await getBorrowUserData(lendingPool, deployer)
+
+    await repay(amountDaiToBorrowWei, daiTokenAddress, lendingPool, deployer)
+    await getBorrowUserData(lendingPool, deployer)
 }
 
 async function getLendingPool(account) {
@@ -55,6 +60,12 @@ async function getBorrowUserData(lendingPool, account) {
     return { availableBorrowsETH, totalDebtETH }
 }
 
+async function borrowDai(daiAddress, lendingPool, amountDaiToBorrowWei, account) {
+    const borrowTx = await lendingPool.borrow(daiAddress, amountDaiToBorrowWei, 1, 0, account)
+    await borrowTx.wait(1)
+    console.log(`You've borrowed!`)
+}
+
 async function getDaiPrice() {
     const daiEthPriceFeed = await ethers.getContractAt(
         "AggregatorV3Interface",
@@ -64,6 +75,13 @@ async function getDaiPrice() {
     const price = (await daiEthPriceFeed.latestRoundData())[1]
     console.log(`DAI/ETH Price: ${price}`)
     return price
+}
+
+async function repay(amount, daiAddress, lendingPool, account) {
+    await approveErc20(daiAddress, lendingPool.address, amount, account)
+    const repayTx = await lendingPool.repay(daiAddress, amount, 1, account)
+    await repayTx.wait(1)
+    console.log("repayed")
 }
 
 main()
